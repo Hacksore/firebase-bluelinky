@@ -12,7 +12,7 @@ let vehicle;
 
 const middleWare = async (req, res, next) => {
 
-  const ip = req.connection.remoteAddress;
+  const ip = req.headers['x-forwarded-for'];
   console.log(req.path, ip);
 
   if(req.body.VALIDATION_KEY !== config.validation_key){
@@ -40,7 +40,7 @@ app.post('/start', async (req, res) => {
     response = await vehicle.start({
       airCtrl: true,
       igniOnDuration: 10,
-      airTempvalue: 60
+      airTempvalue: 70
     });
 
   } catch (e) {
