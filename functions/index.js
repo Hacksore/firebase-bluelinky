@@ -2,41 +2,76 @@ const functions = require('firebase-functions');
 const express = require('express');
 const BlueLinky = require('bluelinky');
 const bodyParser = require('body-parser');
+const got = require('got');
+const MyQ = require('myq-api');
 
-const config = functions.config().bluelink;
+const config = functions.config();
+const account = new MyQ(config.myq.username, config.myq.password);
+
+const PLATE_DETECTION_URL = config.plate.url;
+const MY_PLATE = config.plate.value;
+
 const app = express();
 app.use(bodyParser.json());
 
-let client;
 let vehicle;
+let door;
 
-const middleWare = async (req, res, next) => {
-
+const middleWare = (req, res, next) => {
   const ip = req.headers['x-forwarded-for'];
-  console.log(req.path, ip);
 
-  if(req.body.VALIDATION_KEY !== config.validation_key){
-    console.log('Bad key used by: ' + ip);
-    return res.send({error: 'bad key'});
+  if(req.body.VALIDATION_KEY !== config.bluelink.validation_key){
+    console.log('Bad key used by', ip);
+    return res.send({ error: 'something went wrong' });
   }
 
-  if(client === undefined){
-    client = new BlueLinky({username: config.username, password: config.password});
+  const client = new BlueLinky({ 
+    username: config.bluelink.username, 
+    password: config.bluelink.password,
+    pin: config.bluelink.pin,
+    region: 'US'
+  });
 
-    //login
-    await client.login();
+  client.on('ready', async () => {
+    await account.login();
 
-    vehicle = await client.registerVehicle(config.vin, config.pin);
-  }
+    const response = await account.getDevices([17]);
+    door = response.devices[0];
 
-  return next();
+    vehicle = client.getVehicle(config.bluelink.vin);
+    console.log(vehicle.name);     
+    return next();
+  });
+
 }
 
 app.use(middleWare);
 
+const getVehicle = async () => {
+  const response = await got(PLATE_DETECTION_URL);
+  const data = JSON.parse(response.body);
+
+  // this might not be ideal as the opencv sometimes has issues
+  // going to observe the failure rate here
+  const hasMyCar = data.plates.find(item => item.plate === MY_PLATE);
+  
+  if (data.detected && hasMyCar){
+    return Promise.resolve(true);
+  }
+
+  return Promise.resolve(false);
+}
+
 app.post('/start', async (req, res) => {
   let response;
   try {
+    const hasCar = await getVehicle();
+    
+    if (hasCar) {
+      console.log('My car was detected, opening door');
+      await account.setDoorState(door.id, 1);
+    }
+
     response = await vehicle.start({
       airCtrl: true,
       igniOnDuration: 10,
